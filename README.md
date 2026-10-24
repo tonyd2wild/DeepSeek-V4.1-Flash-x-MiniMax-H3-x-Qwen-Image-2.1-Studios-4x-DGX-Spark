@@ -2,8 +2,8 @@
 
 **One 1M-context LLM and four image/video studios on the same four NVIDIA DGX Sparks, at the same time.**
 
-DeepSeek-V4.1-Flash runs tensor-parallel across all four Sparks (TensorFold TP4, 1,048,576 tokens of context per request,
-a 2,097,152-token KV pool, 16 streams). Next to each DeepSeek rank, every Spark also runs its own ComfyUI "studio" that holds
+DeepSeek-V4.1-Flash runs tensor-parallel across all four Sparks (TensorFold TP4, up to 1,048,576 tokens of context per
+request, a 2,097,152-token KV pool, 16 streams; our agents run at 300K per request day to day, 1M is the ceiling when needed). Next to each DeepSeek rank, every Spark also runs its own ComfyUI "studio" that holds
 **Qwen-Image-2.1** (pictures) and **MiniMax H3** (video with audio). That gives four independent media slots: four pictures
 at once, four videos at once, or any mix, while the LLM keeps serving.
 
@@ -61,7 +61,7 @@ Full explanation, including why pinned memory matters on unified memory: [docs/M
 **DeepSeek (TensorFold TP4)**, from the recipe's `config.env`:
 
 ```bash
-CONTEXT=1048576          # per request
+CONTEXT=1048576          # per-request ceiling (our agents send up to 300K; 1M is there when needed)
 WINDOW=2097152           # KV pool, shared by all streams
 PARALLEL=16              # streams
 FOLLOW_FLAGS="--round-rows 48 --streams 16 --pool 2097152 --context 1048576"
