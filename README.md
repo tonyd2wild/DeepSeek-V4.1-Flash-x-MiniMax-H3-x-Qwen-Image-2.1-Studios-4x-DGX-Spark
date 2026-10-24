@@ -1,5 +1,7 @@
 # DeepSeek V4.1 Flash x MiniMax H3 x Qwen Image 2.1 on 4 DGX Sparks
 
+![1 LLM + 4 Studios: DeepSeek V4.1 Flash across four DGX Sparks, each also running a Qwen Image 2.1 / MiniMax H3 studio](docs/banner.jpg)
+
 **One 1M-context LLM and four image/video studios on the same four NVIDIA DGX Sparks, at the same time.**
 
 DeepSeek-V4.1-Flash runs tensor-parallel across all four Sparks (TensorFold TP4, up to 1,048,576 tokens of context per
