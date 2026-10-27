@@ -4,6 +4,11 @@
 
 **One 1M-context LLM and four image/video studios on the same four NVIDIA DGX Sparks, at the same time.**
 
+> **2026-10-26 update:** our DeepSeek moved to [bertholomus's TensorFold recipe v0.3.5](https://github.com/bertholomus/deepseek-v4.1-tensorfold-tp4-4xgb10)
+> and his EXL3 4.0 bpw pack, which takes about 7 GB more per Spark than the 3.5 bpw pack this setup was built on. With it, **Qwen-Image-2.1 runs on all four
+> Sparks at once next to DeepSeek with a 6,291,456-token KV pool, and MiniMax H3 video no longer fits.** Details and numbers in
+> [The 4.0 bpw lane](#the-40-bpw-lane-2026-10-26). Without studios, the same lane serves a 29,360,128-token pool.
+
 DeepSeek-V4.1-Flash runs tensor-parallel across all four Sparks (TensorFold TP4, up to 1,048,576 tokens of context per
 request, a 2,097,152-token KV pool, 16 streams; our agents run at 300K per request day to day, 1M is the ceiling when needed). Next to each DeepSeek rank, every Spark also runs its own ComfyUI "studio" that holds
 **Qwen-Image-2.1** (pictures) and **MiniMax H3** (video with audio). That gives four independent media slots: four pictures
@@ -30,12 +35,12 @@ one rule for the scheduler: **one job per Spark**.
 
 | what | status |
 |---|---|
-| DeepSeek V4.1 Flash TP4 serving on 4 Sparks (1M context, 2,097,152 KV pool, 16 streams) | **in daily use** since 2026-10-17. Recipe, numbers and evals: [DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks) |
+| DeepSeek V4.1 Flash TP4 serving on 4 Sparks (1M context, 16 streams) | **in daily use** since 2026-10-17; since 2026-10-26 on the recipe v0.3.5 / 4.0 bpw lane with a 6,291,456-token pool while the studios run (2,097,152 on the 3.5 bpw lane). Recipe, numbers and evals: [DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks) |
 | One studio per Spark (ComfyUI 0.36, Qwen-Image-2.1 + MiniMax H3) next to the rank | **running** since 2026-10-20; our studio web app and our agents' image/video tools send jobs to it |
 | A picture or a video on any one Spark while DeepSeek serves | **measured**, see [Numbers](#numbers) |
 | Pictures on two or more Sparks at the same time | **measured** (2 at once on 2026-10-23, 2 at once on 2026-10-24) |
-| All four Sparks rendering at the same time (4 pictures or 4 videos) | **not yet proven.** Our first attempt (2026-10-24) collided with other users' jobs: 2 Sparks finished, 2 studio processes went into sticky CUDA errors and needed a restart. Clean re-run pending |
-| DeepSeek's speed while studios render | **not measured cleanly yet** (only an older lane's curve, below) |
+| All four Sparks rendering at the same time | **pictures: measured 2026-10-26** (4 of 4 at once, twice, the second time with DeepSeek under a 16-stream + 131K-prompt load, 0 errors). **Videos: not possible on the 4.0 bpw lane** (see below); on the 3.5 bpw lane our 2026-10-24 attempt collided with other users' jobs and was not re-run |
+| DeepSeek's speed while studios render | **measured once (2026-10-26)**: 16 streams x 2 replies at 56.9 tok/s total while four Qwen pictures rendered and a 131K prompt was read (0 errors); the same 16-stream load alone runs at about 59-61 tok/s total with a long prompt in flight. Not a clean A/B yet |
 | The same setup on 2 Sparks with a smaller quant | **not built**, see [docs/TWO-SPARKS.md](docs/TWO-SPARKS.md) |
 
 We will update this table as runs land. Nothing above "measured" is a claim.
@@ -57,6 +62,36 @@ So a Spark holds **one** studio job at a time: a picture leaves ~15-20 GB spare,
 Two jobs on one Spark do not fit. That is why the slots are per Spark, and why "four at once" means one per Spark.
 
 Full explanation, including why pinned memory matters on unified memory: [docs/MEMORY.md](docs/MEMORY.md).
+
+## The 4.0 bpw lane (2026-10-26)
+
+Our DeepSeek now runs [bertholomus's recipe v0.3.5](https://github.com/bertholomus/deepseek-v4.1-tensorfold-tp4-4xgb10) with his
+[EXL3 4.0 bpw pack](https://huggingface.co/bertholomus/DeepSeek-V4.1-Flash-1017-EXL3-4.0bpw) (what we changed and every number:
+[the DeepSeek repo's v0.3.5 run folder](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks/tree/main/runs/2026-10-26-1017-tensorfold-v035-4bpw)).
+The rank is about 7 GB bigger per Spark than the 3.5 bpw rank above, and its KV pool costs about 0.87 GB per 1M positions on every node,
+so the pool is the knob that decides what the studios get.
+
+MemAvailable per Spark with the studio container up and idle (rank 0 / ranks 1-3):
+
+| DeepSeek KV pool | free for the studio (GB) | Qwen picture (needs ~20 GB + the 4 GB floor) | H3 2.3 s clip (needs ~31 GB + the 4 GB floor) |
+|---|---|---|---|
+| 1,048,576 (the minimum, one 1M chat) | 31.3 / 33.0-33.3 | fits | **does not fit** |
+| 2,097,152 | 31.4-32.7 / 33.3-34.8 | fits; 4 at once measured, lowest MemAvailable 11.0 / 12.6-13.0 GB | does not fit |
+| **6,291,456 (what we run with the studios)** | 26.7 / 28.5-28.8 | **fits; 4 at once under DeepSeek load, lowest 8.46 / 9.41-9.43 GB** | does not fit |
+| 29,360,128 (no studios) | 8.9 / 10.4-10.6 | no | no |
+
+What the 6,291,456 test ran, all at the same time: a Qwen-Image-2.1 picture on each of the four Sparks (4 of 4 finished, 149-155 s each
+under the load; 75-79 s each without DeepSeek load), 16 DeepSeek streams x 2 replies (32 of 32, 0 errors) and a 131,072-token needle prompt
+(found). The studio guard never fired. 6,291,456 positions is still six full 1M conversations at once.
+
+**MiniMax H3 video:** an H3 clip needs about 31 GB on its Spark plus the guard's 4 GB floor, and even at the smallest pool the 4.0 bpw rank
+leaves only 31-33 GB. Ways back to video, none applied yet:
+1. **Video mode:** switch DeepSeek to the 3.5 bpw lane with a 2,097,152 pool (the setup every H3 number in this README was measured on), render,
+   switch back; about 2 minutes each way, and the LLM is down during each switch.
+2. **Split the Sparks:** DeepSeek TP2 on two Sparks ([measured](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks#tensorfold-tp2-lane-two-sparks):
+   73 tok/s at one user, 1M context) and the other two as full-time studios with no shared memory.
+3. Pictures only on the Sparks, video elsewhere.
+
 
 ## The settings that make it fit
 
@@ -136,6 +171,8 @@ Measured on our four Sparks with DeepSeek serving real traffic. "Cold" includes 
 | Qwen-Image-2.1 turbo, 1328x1328, cold, two Sparks at once (2026-10-24) | 2 | 34.5 s and 35.7 s |
 | MiniMax H3 2.3 s clip with audio, 640x352, 20 steps, cold (2026-10-20) | 1 | 123-136 s; lowest MemAvailable 7.4-7.8 GB; DeepSeek `/health` stayed ok |
 | MiniMax H3 2.3 s clip, studio defaults, cold (2026-10-23) | 1 | 4 min 31 s |
+| Qwen-Image-2.1, 1328x1328, cold, all four Sparks at once, DeepSeek 4.0 bpw lane at a 2,097,152 pool (2026-10-26) | 4 | 75-79 s each; lowest MemAvailable 11.0 GB (rank 0), 12.6-13.0 GB |
+| The same, at a 6,291,456 pool with DeepSeek under 16 streams + a 131K prompt (2026-10-26) | 4 | 149-155 s each; lowest MemAvailable 8.46 GB (rank 0), 9.41-9.43 GB; 0 DeepSeek errors |
 
 What a render costs DeepSeek has not been measured cleanly on this lane. On an older vLLM DeepSeek lane (August 2026), one
 H3 render on one of the four nodes cost about 34% of aggregate throughput: with tensor parallelism, every step waits for
